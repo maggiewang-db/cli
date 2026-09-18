@@ -1,13 +1,61 @@
 package docker
 
 import (
+	"context"
 	"fmt"
+	"os"
 
 	authlib "github.com/databricks/cli/libs/auth"
 	"github.com/databricks/cli/libs/databrickscfg/profile"
+	"github.com/databricks/cli/libs/dockercredentials"
+	"github.com/databricks/databricks-sdk-go"
 	"github.com/databricks/databricks-sdk-go/config"
 )
 
+type dockerProfileDeps struct {
+	profiler               profile.Profiler
+	newWorkspaceClient     func(*databricks.Config) (*databricks.WorkspaceClient, error)
+	resolveWorkspaceID     func(context.Context, *databricks.WorkspaceClient) (string, error)
+	resolveWorkspaceRegion func(context.Context, *databricks.WorkspaceClient) (string, error)
+	validateWorkspaceHost  func(string) error
+	executable             func() (string, error)
+	registryHost           func(string, string, string) (string, error)
+}
+
+type dockerProfileHostError struct {
+	profileName string
+	cause       error
+}
+
+func (e *dockerProfileHostError) Error() string {
+	return fmt.Sprintf("profile %q does not target a supported Databricks workspace host. Select a workspace profile, or create one with databricks auth login --host <workspace-url> --profile <name>", e.profileName)
+}
+
+func (e *dockerProfileHostError) Unwrap() error {
+	return e.cause
+}
+
+func defaultDockerProfileDeps() dockerProfileDeps {
+	return dockerProfileDeps{
+		profiler: profile.DefaultProfiler,
+		newWorkspaceClient: func(cfg *databricks.Config) (*databricks.WorkspaceClient, error) {
+			return databricks.NewWorkspaceClient(cfg)
+		},
+		resolveWorkspaceID: authlib.ResolveWorkspaceID,
+		resolveWorkspaceRegion: func(ctx context.Context, w *databricks.WorkspaceClient) (string, error) {
+			summary, err := w.Metastores.Summary(ctx)
+			if err != nil {
+				return "", err
+			}
+			return summary.Region, nil
+		},
+		validateWorkspaceHost: dockercredentials.ValidateWorkspaceHost,
+		executable:            os.Executable,
+		registryHost:          dockercredentials.RegistryHost,
+	}
+}
+
+// validateDockerCredentialProfile accepts only workspace OAuth profiles that the credential helper can refresh.
 func validateDockerCredentialProfile(p profile.Profile) error {
 	if p.HasClientCredentials {
 		return fmt.Errorf("profile %q uses client credentials. Docker credential helper requires a profile created by databricks auth login", p.Name)
@@ -21,6 +69,7 @@ func validateDockerCredentialProfile(p profile.Profile) error {
 	return nil
 }
 
+// isDockerCredentialAccountOnlyProfile identifies profiles that cannot route workspace API requests.
 func isDockerCredentialAccountOnlyProfile(p profile.Profile) bool {
 	if p.Host == "" {
 		return true
@@ -30,4 +79,21 @@ func isDockerCredentialAccountOnlyProfile(p profile.Profile) bool {
 		return true
 	}
 	return p.AccountID != "" && (p.WorkspaceID == "" || p.WorkspaceID == authlib.WorkspaceIDNone)
+}
+
+// validateDockerWorkspaceHost adds profile selection guidance to unsupported host errors.
+func validateDockerWorkspaceHost(p profile.Profile, validate func(string) error) error {
+	err := validate(p.Host)
+	if err == nil {
+		return nil
+	}
+	return &dockerProfileHostError{profileName: p.Name, cause: err}
+}
+
+// rewriteDockerProfileError adds profile-specific recovery guidance to typed authentication errors.
+func rewriteDockerProfileError(ctx context.Context, p profile.Profile, err error) error {
+	if rewritten, rewrittenErr := authlib.RewriteAuthError(ctx, p.Host, p.AccountID, p.Name, err); rewritten {
+		return rewrittenErr
+	}
+	return err
 }
