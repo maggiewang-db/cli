@@ -187,7 +187,8 @@ func PullResourcesState(ctx context.Context, b *bundle.Bundle, alwaysPull Always
 	// resolved engine itself. Tagging terraform here would be wrong for a successful migration
 	// and, since the SDK user agent only appends, could not be replaced.
 	// XXX move this outside this function to bundle/config/engine
-	if !(requiredEngine.Type == engine.EngineDirect && !winner.Engine.IsDirect()) {
+	autoMigrate := requiredEngine.Type == engine.EngineDirect && !winner.Engine.IsDirect()
+	if !autoMigrate {
 		ctx = useragent.InContext(ctx, "engine", string(winner.Engine))
 	}
 
