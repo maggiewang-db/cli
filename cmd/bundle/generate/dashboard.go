@@ -34,6 +34,7 @@ import (
 	"github.com/databricks/databricks-sdk-go/apierr"
 	"github.com/databricks/databricks-sdk-go/service/dashboards"
 	"github.com/databricks/databricks-sdk-go/service/workspace"
+	"github.com/databricks/databricks-sdk-go/useragent"
 	"github.com/spf13/cobra"
 	"go.yaml.in/yaml/v3"
 )
@@ -399,6 +400,9 @@ func (d *dashboard) runForResource(ctx context.Context, b *bundle.Bundle) {
 	if logdiag.HasError(ctx) {
 		return
 	}
+	// generate never migrates, so stateDesc.Engine is final here. PullResourcesState skips
+	// tagging the user agent on the auto-migration path, so set it once for that case.
+	ctx = useragent.InContext(ctx, "engine", string(stateDesc.Engine))
 
 	var state statemgmt.ExportedResourcesMap
 	if stateDesc.Engine.IsDirect() {

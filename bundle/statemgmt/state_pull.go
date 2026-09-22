@@ -181,9 +181,15 @@ func PullResourcesState(ctx context.Context, b *bundle.Bundle, alwaysPull Always
 		}
 	}
 
-	// Set the engine in the user agent
+	// Set the engine in the user agent, except on the auto-migration path (direct requested
+	// but the state is still terraform). There the engine the run ends up using is only final
+	// after the caller runs, skips, or falls back from the migration, so the caller tags the
+	// resolved engine itself. Tagging terraform here would be wrong for a successful migration
+	// and, since the SDK user agent only appends, could not be replaced.
 	// XXX move this outside this function to bundle/config/engine
-	ctx = useragent.InContext(ctx, "engine", string(winner.Engine))
+	if !(requiredEngine.Type == engine.EngineDirect && !winner.Engine.IsDirect()) {
+		ctx = useragent.InContext(ctx, "engine", string(winner.Engine))
+	}
 
 	if len(states) == 0 {
 		return ctx, winner
